@@ -1,0 +1,6 @@
+node_modules/
+out/
+*.png
+!docs/*.png
+.claude/settings.local.json
+stylemesh.config.json

@@ -1,0 +1,64 @@
+{
+  "name": "stylemesh",
+  "version": "0.1.0",
+  "description": "Code-first 3D asset modeling for AI agents: write a model once in JavaScript, export game-ready GLB in any art style (ink toon, low-poly, hand-painted, voxel, clay, PBR).",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "stylemesh": "cli.js"
+  },
+  "main": "lib/api.js",
+  "exports": {
+    ".": "./lib/api.js",
+    "./core": "./lib/core.js",
+    "./shapes": "./lib/shapes.js",
+    "./paint": "./lib/paint.js",
+    "./styles": "./lib/styles.js",
+    "./render": "./lib/render.js"
+  },
+  "files": [
+    "cli.js",
+    "mcp.js",
+    "lib",
+    "viewer",
+    "templates",
+    "examples",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "3d",
+    "gltf",
+    "glb",
+    "procedural",
+    "game-assets",
+    "mcp",
+    "ai-agents",
+    "three.js",
+    "roblox",
+    "toon",
+    "voxel",
+    "pbr"
+  ],
+  "scripts": {
+    "build": "node cli.js build --style all",
+    "view": "node cli.js view",
+    "mcp": "node cli.js mcp",
+    "check": "node cli.js check --style all",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "three": "0.170.0",
+    "@gltf-transform/core": "4.1.1",
+    "@napi-rs/canvas": "0.1.65"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrsHorrid/stylemesh.git"
+  },
+  "homepage": "https://github.com/MrsHorrid/stylemesh"
+}

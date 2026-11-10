@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>stylemesh viewer</title>
+<style>
+  :root { --bg: #efe6da; --panel: #fffaf2; --ink: #16131a; --muted: #6b6159; --accent: #f4b400; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: var(--ink); background: var(--bg); display: grid; grid-template-columns: 250px 1fr; height: 100vh; }
+  aside { background: var(--panel); border-right: 2px solid var(--ink); overflow: auto; padding: 12px; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  select { width: 100%; font: inherit; padding: 6px; border: 2px solid var(--ink); border-radius: 8px; background: #fff; }
+  .blurb { color: var(--muted); font-size: 12px; margin: 6px 0 10px; min-height: 32px; }
+  button.item { display: block; width: 100%; text-align: left; border: 2px solid transparent; background: none; padding: 5px 8px; border-radius: 8px; cursor: pointer; font: inherit; color: inherit; }
+  button.item:hover { background: #f3e9d9; }
+  button.item[aria-pressed="true"] { border-color: var(--ink); background: #fde9a8; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 10px; white-space: pre-wrap; }
+  label { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 13px; }
+  main { position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+  @media (max-width: 700px) { body { grid-template-columns: 1fr; grid-template-rows: 220px 1fr; } aside { border-right: 0; border-bottom: 2px solid var(--ink); } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<aside>
+  <h1>stylemesh</h1>
+  <select id="style" aria-label="Art style"></select>
+  <div class="blurb" id="blurb"></div>
+  <label><input type="checkbox" id="all" /> Fish lineup</label>
+  <label><input type="checkbox" id="spin" checked /> Turntable</label>
+  <div id="list"></div>
+  <div class="meta" id="meta"></div>
+</aside>
+<main><canvas id="c"></canvas></main>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+const envMap = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture; // image-based light for PBR
+const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 500);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+const hemi = new THREE.HemisphereLight('#fff4e0', '#8a7f9a', 1.4); scene.add(hemi);
+const key = new THREE.DirectionalLight('#fff1d6', 2.4);
+key.position.set(6, 10, 7); key.castShadow = true; key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = key.shadow.camera.bottom = -12; key.shadow.camera.right = key.shadow.camera.top = 12;
+scene.add(key);
+const rim = new THREE.DirectionalLight('#bcd4ff', 1.0); rim.position.set(-6, 4, -8); scene.add(rim);
+const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshLambertMaterial({ color: '#efe3d2' }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+// per-style preview rigs
+const RIGS = {
+  toon:    { bg: '#e9dccb', hemi: 1.4, key: 2.4, rim: 1.0, ground: '#efe3d2' },
+  flat:    { bg: '#cfe3e8', hemi: 1.6, key: 2.0, rim: 0.6, ground: '#d8e8d0' },
+  painted: { bg: '#d9cbb0', hemi: 2.8, key: 0.55, rim: 0.25, ground: '#c9b48e' },
+  clay:    { bg: '#e8e2da', hemi: 1.2, key: 2.2, rim: 0.8, ground: '#ddd6cc' },
+  pbr:     { bg: '#cfd6dc', hemi: 0.3, key: 2.6, rim: 1.2, ground: '#b9c0c6', env: true },
+};
+const ramp = new THREE.DataTexture(new Uint8Array([90, 90, 90, 255, 180, 180, 180, 255, 255, 255, 255, 255]), 3, 1);
+ramp.minFilter = ramp.magFilter = THREE.NearestFilter; ramp.needsUpdate = true;
+
+const catalog = await (await fetch('/models/catalog.json')).json();
+const sel = document.getElementById('style');
+for (const s of catalog) sel.add(new Option(s.label, s.id));
+let style = catalog.find((s) => s.id === (new URLSearchParams(location.search).get('style') || 'ink')) || catalog[0];
+sel.value = style.id;
+let index = [];
+
+const loader = new GLTFLoader();
+const cache = new Map();
+function restyle(root, entry) {
+  const mode = style.viewer;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const src = o.material;
+    const tint = entry.tints?.[src.name];
+    const color = tint ? new THREE.Color(tint) : src.color;
+    const common = { map: src.map, color, vertexColors: !!o.geometry.attributes.color };
+    if (mode === 'pbr') { // keep the glTF PBR material as authored; just light it
+      src.envMapIntensity = 1; if (src.userData.emissiveStrength) src.emissiveIntensity = src.userData.emissiveStrength;
+      o.castShadow = true; o.receiveShadow = true; return;
+    }
+    if (src.name === 'Ink') o.material = mode === 'toon' ? new THREE.MeshBasicMaterial({ color: '#16131a' }) : new THREE.MeshLambertMaterial({ color: src.color });
+    else if (mode === 'toon') o.material = new THREE.MeshToonMaterial({ ...common, gradientMap: ramp });
+    else if (mode === 'flat') o.material = new THREE.MeshLambertMaterial({ ...common, flatShading: true });
+    else if (mode === 'painted') o.material = new THREE.MeshLambertMaterial(common);
+    else o.material = new THREE.MeshStandardMaterial({ ...common, roughness: 0.95, metalness: 0 });
+    o.castShadow = true; o.receiveShadow = true;
+  });
+}
+async function load(entry) {
+  const k = style.id + '/' + entry.name;
+  if (!cache.has(k)) {
+    const gltf = await loader.loadAsync('/models/' + style.dir + entry.file);
+    restyle(gltf.scene, entry);
+    cache.set(k, gltf.scene);
+  }
+  return cache.get(k).clone(true);
+}
+
+let current = new THREE.Group(); scene.add(current);
+let selected = null, lineup = false;
+function frame(obj) {
+  const box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  obj.position.y -= box.min.y; c.y -= box.min.y;
+  const d = Math.max(size.x, size.y, size.z) * (lineup ? 1.6 : 1.9);
+  camera.position.set(c.x + d * 0.35, c.y + d * 0.45, c.z + d * 1.05);
+  controls.target.copy(c); controls.update();
+}
+async function show(names) {
+  window.__ready = false;
+  const next = new THREE.Group();
+  let x = 0;
+  for (const n of names) {
+    const e = index.find((i) => i.name === n);
+    const m = await load(e);
+    if (names.length > 1) { m.position.x = x; x += Math.max(e.size[0], e.size[2]) + 0.5; }
+    next.add(m);
+  }
+  if (names.length > 1) { const off = x / 2; next.children.forEach((m) => (m.position.x -= off)); }
+  scene.remove(current); current = next; scene.add(current);
+  frame(current);
+  const e = names.length === 1 && index.find((i) => i.name === names[0]);
+  document.getElementById('meta').textContent = e ? `${e.name}\n${e.tris} tris  ${e.parts.length} parts\n${e.size.join(' x ')} units` : `${names.length} assets`;
+  window.__ready = true;
+}
+
+function applyRig() {
+  const rig = RIGS[style.viewer] || RIGS.toon;
+  scene.background = new THREE.Color(rig.bg);
+  scene.fog = new THREE.Fog(rig.bg, 30, 90);
+  hemi.intensity = rig.hemi; key.intensity = rig.key; rim.intensity = rig.rim;
+  ground.material.color.set(rig.ground);
+  scene.environment = rig.env ? envMap : null;
+  renderer.toneMapping = rig.env ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  document.getElementById('blurb').textContent = style.blurb || '';
+}
+async function setStyle(id) {
+  style = catalog.find((s) => s.id === id);
+  index = await (await fetch('/models/' + style.dir + 'index.json')).json();
+  applyRig();
+  buildList();
+  if (lineup) await window.showFish(); else await select(selected && index.some((i) => i.name === selected) ? selected : index[0].name);
+}
+const list = document.getElementById('list');
+function buildList() {
+  list.replaceChildren();
+  for (const e of index) {
+    const b = document.createElement('button'); b.className = 'item'; b.textContent = e.name.replace(/^(Fish|Prop)_/, ''); b.dataset.name = e.name;
+    b.setAttribute('aria-pressed', String(e.name === selected && !lineup));
+    b.onclick = () => { document.getElementById('all').checked = false; lineup = false; select(e.name); };
+    list.appendChild(b);
+  }
+}
+async function select(name) {
+  selected = name; lineup = false;
+  list.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.name === name)));
+  await show([name]);
+}
+sel.onchange = () => setStyle(sel.value);
+document.getElementById('all').onchange = (ev) => (ev.target.checked ? window.showFish() : select(selected || index[0].name));
+window.showAsset = select;
+window.setStyle = async (id) => { sel.value = id; await setStyle(id); };
+window.showFish = async () => { lineup = true; await show(index.filter((i) => i.meta.kind === 'fish').map((i) => i.name)); };
+window.showSet = async (names) => { lineup = true; await show(names); };
+
+function resize() { const r = canvas.parentElement.getBoundingClientRect(); renderer.setSize(r.width, r.height, false); camera.aspect = r.width / r.height; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+await setStyle(style.id);
+const q = new URLSearchParams(location.search).get('asset');
+if (q) await select(q);
+renderer.setAnimationLoop((t) => {
+  if (document.getElementById('spin').checked && !lineup) current.rotation.y = t * 0.0004;
+  controls.update(); renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

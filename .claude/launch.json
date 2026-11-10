@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "modeler-viewer",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["cli.js", "view"],
+      "port": 5177
+    }
+  ]
+}

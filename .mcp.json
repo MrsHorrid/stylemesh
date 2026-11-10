@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "stylemesh": { "command": "node", "args": ["cli.js", "mcp"] }
+  }
+}
